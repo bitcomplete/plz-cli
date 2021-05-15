@@ -13,9 +13,11 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
+var Version = "dev"
+
 func main() {
 	app := &cli.App{
-		Version: "0.1.0",
+		Version: Version,
 		Usage:   "plz.review command-line companion",
 		Commands: []*cli.Command{
 			{
