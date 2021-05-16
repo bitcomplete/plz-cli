@@ -13,3 +13,11 @@ source build/bin/activate
 make
 plz --version
 ```
+
+## Releasing a new version
+
+1. Bump the version number in VERSION
+
+2. Commit and push VERSION and any other changes
+
+3. Run `make release`

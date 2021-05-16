@@ -44,7 +44,7 @@ $(BUILD_DIR)/bin/golangci-lint: $(BUILD_DIR)/bin/activate
 	@echo 'install golangci-lint...'
 	@source $(BUILD_DIR)/bin/activate && \
 		cd $(BUILD_DIR) && \
-		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s v1.31.0
+		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s v1.40.1
 
 install-runtime: \
     $(BUILD_DIR)/bin/golangci-lint \
@@ -93,6 +93,6 @@ dist-bins: $(foreach dist,$(ALL_DISTS),$(BUILD_DIR)/dist/$(dist)/plz)
 .PHONY: dist-bins
 
 release: $(ALL_DIST_FILES)
-	@gh release create $(VERSION) $(ALL_DIST_FILES) --title $(VERSION) --notes ""
+	@gh release create $(VERSION) $(ALL_DIST_FILES) --title 'v$(VERSION)' --notes ''
 
 .PHONY: release
