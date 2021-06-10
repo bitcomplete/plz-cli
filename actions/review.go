@@ -2,7 +2,6 @@ package actions
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"fmt"
 	"io/ioutil"
@@ -154,37 +153,34 @@ func checkCleanWorktree(ctx context.Context, gitHubRepo *gitHubRepo) error {
 // getGitIgnorePatterns returns all patterns to ignore for a given project,
 // by looking at the project's gitignore, global gitignore, and system gitignore
 func getGitIgnorePatterns() ([]string, error) {
+	var ignorePatterns []string
 	projectIgnorePatterns, err := getIgnorePatterns("./.gitignore")
 	if err != nil {
 		return nil, err
 	}
+	ignorePatterns = append(ignorePatterns, projectIgnorePatterns...)
 	currentUser, err := user.Current()
 	if err != nil {
 		return nil, err
 	}
 	globalIgnorePath, err := getIgnoreFilePathFromConfig(path.Join(currentUser.HomeDir, ".gitconfig"))
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
 	globalIgnorePatterns, err := getIgnorePatterns(globalIgnorePath)
 	if err != nil {
 		return nil, err
 	}
+	ignorePatterns = append(ignorePatterns, globalIgnorePatterns...)
 	systemIgnorePath, err := getIgnoreFilePathFromConfig("/etc/gitconfig")
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
 	systemIgnorePatterns, err := getIgnorePatterns(systemIgnorePath)
 	if err != nil {
 		return nil, err
 	}
-	ignorePatterns := append(
-		projectIgnorePatterns,
-		append(
-			globalIgnorePatterns,
-			systemIgnorePatterns...,
-		)...,
-	)
+	ignorePatterns = append(ignorePatterns, systemIgnorePatterns...)
 	var allPatterns []string
 	for _, pattern := range ignorePatterns {
 		allPatterns = append(allPatterns, pattern)
@@ -205,11 +201,11 @@ func getGitIgnorePatterns() ([]string, error) {
 // getIgnoreFilePathFromConfig returns path to a gitignore file,
 // specified given config file
 func getIgnoreFilePathFromConfig(configPath string) (string, error) {
-	configContent, err := ioutil.ReadFile(configPath)
-	if err != nil && !os.IsNotExist(err) {
+	configContent, err := os.Open(configPath)
+	if err != nil {
 		return "", err
 	}
-	decoder := gitConfig.NewDecoder(bytes.NewBuffer(configContent))
+	decoder := gitConfig.NewDecoder(configContent)
 	raw := gitConfig.New()
 	if err = decoder.Decode(raw); err != nil {
 		return "", err
