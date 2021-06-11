@@ -334,6 +334,8 @@ func createOrUpdatePR(
 		return true, errors.WithStack(err)
 	}
 	if ri.pr.Base.GetRef() != ri.baseBranch || ri.pr.GetTitle() != title || ri.pr.GetBody() != body {
+		oldTitle := ri.pr.GetTitle()
+		oldBody := ri.pr.GetBody()
 		deps.DebugLog.Println("PR", ri.pr.GetHTMLURL(), "is out of date, updating")
 		_, _, err := gitHubRepo.Client().PullRequests.Edit(
 			ctx,
@@ -342,8 +344,8 @@ func createOrUpdatePR(
 			ri.pr.GetNumber(),
 			&github.PullRequest{
 				Base:  &github.PullRequestBranch{Ref: &ri.baseBranch},
-				Title: &title,
-				Body:  &body,
+				Title: &oldTitle,
+				Body:  &oldBody,
 			},
 		)
 		return true, errors.WithStack(err)
