@@ -342,8 +342,6 @@ func createOrUpdatePR(
 			ri.pr.GetNumber(),
 			&github.PullRequest{
 				Base:  &github.PullRequestBranch{Ref: &ri.baseBranch},
-				Title: &title,
-				Body:  &body,
 			},
 		)
 		return true, errors.WithStack(err)
