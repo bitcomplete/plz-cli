@@ -4,7 +4,11 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io/ioutil"
 	"net/http"
+	"os"
+	"os/user"
+	"path"
 	"regexp"
 	"strings"
 	"text/tabwriter"
@@ -14,9 +18,11 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
+	gitConfig "github.com/go-git/go-git/v5/plumbing/format/config"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/google/go-github/v32/github"
 	"github.com/pkg/errors"
+	"github.com/shibumi/go-pathspec"
 	"github.com/shurcooL/graphql"
 	"github.com/urfave/cli/v2"
 )
@@ -121,9 +127,107 @@ func checkCleanWorktree(ctx context.Context, gitHubRepo *gitHubRepo) error {
 		return errors.WithStack(err)
 	}
 	if !status.IsClean() {
-		return errors.Errorf("index is not clean:\n%v", status)
+		// go-git's handling of gitignore is not reliable, so we iterate over
+		// un-clean files again to make sure that files to be ignored are
+		// properly ignored based on the new ignore patterns.
+		ignorePatterns, err := getGitIgnorePatterns()
+		if err != nil {
+			return err
+		}
+		for filePath := range status {
+			match, err := pathspec.GitIgnore(ignorePatterns, filePath)
+			if err != nil {
+				return err
+			}
+			if match {
+				delete(status, filePath)
+			}
+		}
+		if len(status) > 0 {
+			return errors.Errorf("index is not clean:\n%v", status)
+		}
 	}
 	return nil
+}
+
+// getGitIgnorePatterns returns all patterns to ignore for a given project,
+// by looking at the project's gitignore, global gitignore, and system gitignore
+func getGitIgnorePatterns() ([]string, error) {
+	var ignorePatterns []string
+	projectIgnorePatterns, err := getIgnorePatterns("./.gitignore")
+	if err != nil {
+		return nil, err
+	}
+	ignorePatterns = append(ignorePatterns, projectIgnorePatterns...)
+	currentUser, err := user.Current()
+	if err != nil {
+		return nil, err
+	}
+	globalIgnorePath, err := getIgnoreFilePathFromConfig(path.Join(currentUser.HomeDir, ".gitconfig"))
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	globalIgnorePatterns, err := getIgnorePatterns(globalIgnorePath)
+	if err != nil {
+		return nil, err
+	}
+	ignorePatterns = append(ignorePatterns, globalIgnorePatterns...)
+	systemIgnorePath, err := getIgnoreFilePathFromConfig("/etc/gitconfig")
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	systemIgnorePatterns, err := getIgnorePatterns(systemIgnorePath)
+	if err != nil {
+		return nil, err
+	}
+	ignorePatterns = append(ignorePatterns, systemIgnorePatterns...)
+	var allPatterns []string
+	for _, pattern := range ignorePatterns {
+		allPatterns = append(allPatterns, pattern)
+		// for any pattern that has no wildcard and slash, add a slash at the end
+		// to make sure that a new rule is added that every file in a directory
+		// is ignored. this is to handle go-git's behaviour where certain files
+		// are not ignored (e.g., node_modules/dist/.gitkeep is not ignored even
+		// when there is a pattern `node_modules` in gitignore file.
+		if !strings.Contains(pattern, "**") &&
+			!strings.HasPrefix(pattern, "/") &&
+			!strings.HasSuffix(pattern, "/") {
+			allPatterns = append(allPatterns, pattern, pattern+"/")
+		}
+	}
+	return allPatterns, nil
+}
+
+// getIgnoreFilePathFromConfig returns path to a gitignore file,
+// specified given config file
+func getIgnoreFilePathFromConfig(configPath string) (string, error) {
+	configContent, err := os.Open(configPath)
+	if err != nil {
+		return "", err
+	}
+	decoder := gitConfig.NewDecoder(configContent)
+	raw := gitConfig.New()
+	if err = decoder.Decode(raw); err != nil {
+		return "", err
+	}
+	configSection := raw.Section("core")
+	return configSection.Options.Get("excludesfile"), nil
+}
+
+// getIgnorePatterns reads a gitignore file and returns its list of patterns
+// in a slice of strings
+func getIgnorePatterns(filePath string) ([]string, error) {
+	content, err := ioutil.ReadFile(filePath)
+	if err != nil && !os.IsNotExist(err) {
+		return []string{}, err
+	}
+	var patterns []string
+	for _, pattern := range strings.Split(string(content), "\n") {
+		if pattern != "" {
+			patterns = append(patterns, pattern)
+		}
+	}
+	return patterns, nil
 }
 
 func getReviewInfo(
