@@ -52,7 +52,7 @@ func Review(c *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	graphqlClient := graphql.NewClient("https://api.plz.review/api/v1", &http.Client{
+	graphqlClient := graphql.NewClient(deps.PlzAPIURL, &http.Client{
 		Transport: &authTransport{Token: deps.AuthToken},
 	})
 
@@ -445,7 +445,7 @@ func createOrUpdatePR(
 			gitHubRepo.Name(),
 			ri.pr.GetNumber(),
 			&github.PullRequest{
-				Base:  &github.PullRequestBranch{Ref: &ri.baseBranch},
+				Base: &github.PullRequestBranch{Ref: &ri.baseBranch},
 			},
 		)
 		return true, errors.WithStack(err)
