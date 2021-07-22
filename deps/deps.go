@@ -14,6 +14,7 @@ type Deps struct {
 	InfoLog   *log.Logger
 	DebugLog  *log.Logger
 	AuthToken string
+	PlzAPIURL string
 }
 
 func ContextWithDeps(ctx context.Context, deps *Deps) context.Context {

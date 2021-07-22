@@ -36,6 +36,11 @@ func main() {
 				Name:  "verbose",
 				Usage: "show verbose debug output",
 			},
+			&cli.StringFlag{
+				Name:  "plz-api-url",
+				Value: "https://api.plz.review/api/v1",
+				Usage: "point to a different plz server",
+			},
 		},
 		Before: func(c *cli.Context) error {
 			d, err := makeDeps(c)
@@ -78,5 +83,6 @@ func makeDeps(c *cli.Context) (*deps.Deps, error) {
 		InfoLog:   log.New(os.Stdout, "", 0),
 		DebugLog:  log.New(debugWriter, "[debug] ", log.Ldate|log.Lmicroseconds),
 		AuthToken: authToken,
+		PlzAPIURL: c.String("plz-api-url"),
 	}, nil
 }
