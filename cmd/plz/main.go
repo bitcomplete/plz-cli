@@ -29,6 +29,13 @@ func main() {
 				Name:   "review",
 				Usage:  "start a review",
 				Action: actions.Review,
+				Flags: []cli.Flag{
+					&cli.StringSliceFlag{
+						Name:    "reviewer",
+						Aliases: []string{"r"},
+						Usage:   "add reviewer by GitHub username",
+					},
+				},
 			},
 		},
 		Flags: []cli.Flag{
