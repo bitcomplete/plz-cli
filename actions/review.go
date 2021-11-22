@@ -35,6 +35,7 @@ type reviewInfo struct {
 	baseBranch    string
 	updatedCommit *object.Commit
 	isUpdated     bool
+	reviewer      *github.Reviewers
 }
 
 var reviewTrailerRegex = regexp.MustCompile(
@@ -93,7 +94,7 @@ func Review(c *cli.Context) error {
 		if err != nil {
 			return err
 		}
-		isPRUpdated, err := createOrUpdatePR(ctx, gitHubRepo, ri)
+		isPRUpdated, err := createOrUpdatePR(ctx, gitHubRepo, ri, c.StringSlice("reviewer"))
 		if err != nil {
 			return err
 		}
@@ -410,7 +411,9 @@ func createOrUpdatePR(
 	ctx context.Context,
 	gitHubRepo *gitHubRepo,
 	ri *reviewInfo,
+	reviewers []string,
 ) (bool, error) {
+	var prCreatedOrUpdated bool
 	deps := deps.FromContext(ctx)
 	message := ri.commit.Message
 	if ri.updatedCommit != nil {
@@ -422,9 +425,11 @@ func createOrUpdatePR(
 	if len(parts) > 1 {
 		body = strings.TrimSpace(parts[1])
 	}
+	var prNumber int
+	var reviewersToAdd []string
 	if ri.pr == nil {
 		deps.DebugLog.Println("creating PR for head branch", ri.headBranch)
-		_, _, err := gitHubRepo.Client().PullRequests.Create(
+		prCreated, _, err := gitHubRepo.Client().PullRequests.Create(
 			ctx,
 			gitHubRepo.Owner(),
 			gitHubRepo.Name(),
@@ -435,9 +440,31 @@ func createOrUpdatePR(
 				Body:  &body,
 			},
 		)
-		return true, errors.WithStack(err)
+		if err != nil {
+			return true, errors.WithStack(err)
+		}
+		prNumber = prCreated.GetNumber()
+		reviewersToAdd = reviewers
+		prCreatedOrUpdated = true
+	} else {
+		prNumber = ri.pr.GetNumber()
+		if len(reviewers) > 0 {
+			for _, r := range reviewers {
+				needToAdd := true
+				for _, existingReviewer := range ri.reviewer.Users {
+					if existingReviewer.GetLogin() == r {
+						needToAdd = false
+						break
+					}
+				}
+				if needToAdd {
+					reviewersToAdd = append(reviewersToAdd, r)
+				}
+			}
+		}
 	}
-	if ri.pr.Base.GetRef() != ri.baseBranch || ri.pr.GetTitle() != title || ri.pr.GetBody() != body {
+
+	if ri.pr != nil && (ri.pr.Base.GetRef() != ri.baseBranch || ri.pr.GetTitle() != title || ri.pr.GetBody() != body) {
 		deps.DebugLog.Println("PR", ri.pr.GetHTMLURL(), "is out of date, updating")
 		_, _, err := gitHubRepo.Client().PullRequests.Edit(
 			ctx,
@@ -448,10 +475,31 @@ func createOrUpdatePR(
 				Base: &github.PullRequestBranch{Ref: &ri.baseBranch},
 			},
 		)
-		return true, errors.WithStack(err)
+		if err != nil {
+			return true, errors.WithStack(err)
+		}
+		prCreatedOrUpdated = true
 	}
+
+	if len(reviewersToAdd) > 0 {
+		deps.DebugLog.Println("Adding reviewers ", reviewersToAdd, "to PR", ri.pr.GetHTMLURL())
+		_, _, err := gitHubRepo.Client().PullRequests.RequestReviewers(
+			ctx,
+			gitHubRepo.Owner(),
+			gitHubRepo.Name(),
+			prNumber,
+			github.ReviewersRequest{
+				Reviewers: reviewersToAdd,
+			},
+		)
+		if err != nil {
+			return true, errors.WithStack(err)
+		}
+		prCreatedOrUpdated = true
+	}
+
 	deps.DebugLog.Println("PR", ri.pr.GetHTMLURL(), "is up to date")
-	return false, nil
+	return prCreatedOrUpdated, nil
 }
 
 func printReviewInfo(ctx context.Context, ris []*reviewInfo) {
@@ -528,5 +576,16 @@ func makeReviewInfo(
 		return nil, errors.New("something's not right, PR is closed")
 	}
 	ri.pr = pr
+	reviewers, _, err := gitHubRepo.Client().PullRequests.ListReviewers(
+		ctx,
+		gitHubRepo.Owner(),
+		gitHubRepo.Name(),
+		pr.GetNumber(),
+		&github.ListOptions{},
+	)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	ri.reviewer = reviewers
 	return ri, nil
 }
