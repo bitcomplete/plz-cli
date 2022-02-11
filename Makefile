@@ -37,7 +37,7 @@ ifeq ($(OS),darwin)
 $(BUILD_DIR)/go/bin/go:
 	@echo installing go...
 	@mkdir -p $(BUILD_DIR)/bin
-	@cd $(BUILD_DIR) && curl -Ls https://golang.org/dl/go1.16.4.darwin-amd64.tar.gz | tar xz
+	@cd $(BUILD_DIR) && curl -Ls https://golang.org/dl/go1.17.6.darwin-amd64.tar.gz | tar xz
 endif
 
 $(BUILD_DIR)/bin/golangci-lint: $(BUILD_DIR)/bin/activate

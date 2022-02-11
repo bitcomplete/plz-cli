@@ -37,6 +37,11 @@ func main() {
 					},
 				},
 			},
+			{
+				Name:   "switch",
+				Usage:  "switch to a review branch",
+				Action: actions.Switch,
+			},
 		},
 		Flags: []cli.Flag{
 			&cli.BoolFlag{
