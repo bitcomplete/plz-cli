@@ -2,12 +2,6 @@ BUILD_DIR := $(PWD)/.build
 SHELL := /bin/bash
 UNAME := $(shell uname)
 
-# Current version of the software.
-VERSION := $(shell cat VERSION)
-
-# Platforms to build distributions for.
-ALL_DISTS = darwin-amd64 darwin-arm64 linux-amd64
-
 GO_SOURCES := $(shell find `echo *` -name '*.go')
 
 ifeq ($(findstring Darwin,$(UNAME)),Darwin)
@@ -74,25 +68,18 @@ lint: $(BUILD_DIR)/bin/activate $(BUILD_DIR)/bin/golangci-lint
 # Distribution
 #
 
-ALL_DIST_FILES := $(foreach dist,$(ALL_DISTS),$(BUILD_DIR)/dist/plz-$(dist)-$(VERSION).tar.gz)
-
-$(BUILD_DIR)/dist/%/plz: $(BUILD_DIR)/bin/activate $(GO_SOURCES) VERSION
-	@source $(BUILD_DIR)/bin/activate && \
-		GOOS=`echo $* | awk -F- '{ print $$1 }'` \
-		GOARCH=`echo $* | awk -F- '{ print $$2 }'` \
-		go build -ldflags "-X main.Version=$(VERSION)" -o $@ ./cmd/plz
-
-$(BUILD_DIR)/dist/plz-%-$(VERSION).tar.gz: $(BUILD_DIR)/dist/%/plz
-	@tar -czf $@ -C $(<D) plz
-
-# Explicitly list dist binaries so that they're not marked as intermediate files
-# and removed:
-# https://www.gnu.org/software/make/manual/html_node/Chained-Rules.html#Chained-Rules
-dist-bins: $(foreach dist,$(ALL_DISTS),$(BUILD_DIR)/dist/$(dist)/plz)
-
-.PHONY: dist-bins
-
-release: $(ALL_DIST_FILES)
-	@gh release create $(VERSION) $(ALL_DIST_FILES) --title 'v$(VERSION)' --notes ''
+release:
+	@if [ ! -z "$$(git status --porcelain)" ]; then \
+		echo 'git index not clean'; \
+		exit 1; \
+	fi; \
+	echo 'enter a version number for this release:'; \
+	readline -r version; \
+	if [ -z "$$version" ]; then \
+		exit 1; \
+	fi; \
+	git tag -a v$$version; \
+	git push origin v$$version; \
+	goreleaser release --rm-dist
 
 .PHONY: release

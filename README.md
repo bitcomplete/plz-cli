@@ -16,8 +16,8 @@ plz --version
 
 ## Releasing a new version
 
-1. Bump the version number in VERSION
+Make sure that the git repo is clean, and then run:
 
-2. Commit and push VERSION and any other changes
-
-3. Run `make release`
+```
+make release
+```
