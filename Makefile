@@ -73,7 +73,13 @@ release:
 		echo 'git index not clean'; \
 		exit 1; \
 	fi; \
-	echo 'enter a version number for this release:'; \
+	echo -n 'provide a GitHub Personal Access Token (https://github.com/settings/tokens): '; \
+	read -r token; \
+	if [ -z "$$token" ]; then \
+		exit 1; \
+	fi; \
+	export GITHUB_TOKEN="$$token"; \
+	echo -n 'enter a version number for this release: '; \
 	read -r version; \
 	if [ -z "$$version" ]; then \
 		exit 1; \
