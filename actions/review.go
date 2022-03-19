@@ -46,15 +46,15 @@ func Review(c *cli.Context) error {
 	ctx := c.Context
 	deps := deps.FromContext(ctx)
 
-	if deps.AuthToken == "" {
+	if deps.Auth == nil {
 		return errors.New("error loading GitHub credentials, run plz auth")
 	}
-	gitHubRepo, err := newGitHubRepo(ctx, deps.AuthToken)
+	gitHubRepo, err := newGitHubRepo(ctx, deps.Auth.Token())
 	if err != nil {
 		return err
 	}
-	graphqlClient := graphql.NewClient(deps.PlzAPIURL, &http.Client{
-		Transport: &authTransport{Token: deps.AuthToken},
+	graphqlClient := graphql.NewClient(deps.PlzAPIBaseURL+"/api/v1", &http.Client{
+		Transport: &authTransport{Token: deps.Auth.Token()},
 	})
 
 	if err := checkCleanWorktree(ctx, gitHubRepo); err != nil {

@@ -3,6 +3,8 @@ package deps
 import (
 	"context"
 	"log"
+
+	"github.com/bitcomplete/plz-cli/client/auth"
 )
 
 type depsKeyType int
@@ -10,11 +12,11 @@ type depsKeyType int
 var depsKey depsKeyType
 
 type Deps struct {
-	ErrorLog  *log.Logger
-	InfoLog   *log.Logger
-	DebugLog  *log.Logger
-	AuthToken string
-	PlzAPIURL string
+	ErrorLog *log.Logger
+	InfoLog  *log.Logger
+	DebugLog *log.Logger
+	*auth.Auth
+	PlzAPIBaseURL string
 }
 
 func ContextWithDeps(ctx context.Context, deps *Deps) context.Context {
