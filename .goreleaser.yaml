@@ -1,0 +1,41 @@
+project_name: plz
+
+builds:
+  - main: ./cmd/plz
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+
+archives:
+  - replacements:
+      darwin: Darwin
+      linux: Linux
+      windows: Windows
+      386: i386
+      amd64: x86_64
+    files:
+      - LICENSE
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+
+brews:
+  - tap:
+      owner: bitcomplete
+      name: homebrew-tap
+    description: plz CLI
+    homepage: "https://plz.review"
+    test: system "#{bin}/plz --version"
