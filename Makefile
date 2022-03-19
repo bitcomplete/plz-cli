@@ -74,7 +74,7 @@ release:
 		exit 1; \
 	fi; \
 	echo 'enter a version number for this release:'; \
-	readline -r version; \
+	read -r version; \
 	if [ -z "$$version" ]; then \
 		exit 1; \
 	fi; \
