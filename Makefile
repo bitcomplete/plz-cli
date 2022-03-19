@@ -78,7 +78,7 @@ release:
 	if [ -z "$$version" ]; then \
 		exit 1; \
 	fi; \
-	git tag -a v$$version; \
+	git tag -a v$$version -m "Tag version v$$version"; \
 	git push origin v$$version; \
 	goreleaser release --rm-dist
 
