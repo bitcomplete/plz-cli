@@ -38,6 +38,7 @@ brews:
   - tap:
       owner: bitcomplete
       name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     description: plz CLI
     homepage: "https://plz.review"
     test: system "#{bin}/plz --version"

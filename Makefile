@@ -69,20 +69,11 @@ lint: $(BUILD_DIR)/bin/activate $(BUILD_DIR)/bin/golangci-lint
 #
 
 release:
-	@if [ ! -z "$$(git status --porcelain)" ]; then \
-		echo 'git index is not clean'; \
-		exit 1; \
-	fi; \
-	set -e; \
-	echo -n 'provide a GitHub Personal Access Token (https://github.com/settings/tokens): '; \
-	read -r GITHUB_TOKEN; \
-	test ! -z "$$GITHUB_TOKEN"; \
-	export GITHUB_TOKEN; \
+	@set -e; \
 	echo -n 'enter a version number for this release: '; \
 	read -r PLZ_VERSION; \
 	test ! -z "$$PLZ_VERSION"; \
 	git tag -a v$$PLZ_VERSION -m "v$$PLZ_VERSION"; \
-	git push origin v$$PLZ_VERSION; \
-	goreleaser release --rm-dist
+	git push origin v$$PLZ_VERSION
 
 .PHONY: release
