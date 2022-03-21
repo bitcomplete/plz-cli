@@ -16,7 +16,7 @@ plz --version
 
 ## Releasing a new version
 
-Make sure that the git repo is clean, and then run:
+Make sure that the git repo is clean and up to date with origin/main. Then run:
 
 ```
 make release
