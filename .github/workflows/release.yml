@@ -19,6 +19,7 @@ jobs:
         with:
           app_id: 182548
           private_key: ${{ secrets.HOMEBREW_RELEASER_PRIVATE_KEY }}
+          repository: bitcomplete/homebrew-tap
       - uses: goreleaser/goreleaser-action@v2
         with:
           distribution: goreleaser
