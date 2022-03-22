@@ -1,16 +1,15 @@
 package main
 
 import (
-	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
 
 	"github.com/bitcomplete/plz-cli/client/actions"
+	"github.com/bitcomplete/plz-cli/client/auth"
 	"github.com/bitcomplete/plz-cli/client/deps"
 	"github.com/pkg/errors"
 	"github.com/urfave/cli/v2"
-	"github.com/zalando/go-keyring"
 )
 
 var Version = "dev"
@@ -49,19 +48,29 @@ func main() {
 				Usage: "show verbose debug output",
 			},
 			&cli.StringFlag{
-				Name:  "plz-api-url",
-				Value: "https://api.plz.review/api/v1",
+				Name:  "plz-api-base-url",
+				Value: "https://api.plz.review",
 				Usage: "point to a different plz server",
 			},
 		},
 		Before: func(c *cli.Context) error {
-			d, err := makeDeps(c)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, err.Error())
-				// Don't go through ExitErrHandler because it requires deps.
-				os.Exit(1)
+			debugWriter := ioutil.Discard
+			if c.Bool("verbose") {
+				debugWriter = os.Stdout
 			}
-			c.Context = deps.ContextWithDeps(c.Context, d)
+			plzAPIBaseURL := c.String("plz-api-base-url")
+			auth, err := auth.LoadFromKeyRing(plzAPIBaseURL)
+			if err != nil {
+				return errors.WithStack(err)
+			}
+			baseDeps := &deps.Deps{
+				ErrorLog:      log.New(os.Stderr, "", 0),
+				InfoLog:       log.New(os.Stdout, "", 0),
+				DebugLog:      log.New(debugWriter, "[debug] ", log.Ldate|log.Lmicroseconds),
+				Auth:          auth,
+				PlzAPIBaseURL: plzAPIBaseURL,
+			}
+			c.Context = deps.ContextWithDeps(c.Context, baseDeps)
 			return nil
 		},
 		ExitErrHandler: func(c *cli.Context, err error) {
@@ -79,22 +88,4 @@ func main() {
 		},
 	}
 	_ = app.Run(os.Args)
-}
-
-func makeDeps(c *cli.Context) (*deps.Deps, error) {
-	debugWriter := ioutil.Discard
-	if c.Bool("verbose") {
-		debugWriter = os.Stdout
-	}
-	authToken, err := keyring.Get("plz", "default")
-	if err != nil && !errors.Is(err, keyring.ErrNotFound) {
-		return nil, errors.Wrap(err, "error accessing keychain")
-	}
-	return &deps.Deps{
-		ErrorLog:  log.New(os.Stderr, "", 0),
-		InfoLog:   log.New(os.Stdout, "", 0),
-		DebugLog:  log.New(debugWriter, "[debug] ", log.Ldate|log.Lmicroseconds),
-		AuthToken: authToken,
-		PlzAPIURL: c.String("plz-api-url"),
-	}, nil
 }
