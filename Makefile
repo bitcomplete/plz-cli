@@ -63,17 +63,3 @@ lint: $(BUILD_DIR)/bin/activate $(BUILD_DIR)/bin/golangci-lint
 		golangci-lint run $(GO_SOURCES)
 
 .PHONY: lint
-
-#
-# Distribution
-#
-
-release:
-	@set -e; \
-	echo -n 'enter a version number for this release: '; \
-	read -r PLZ_VERSION; \
-	test ! -z "$$PLZ_VERSION"; \
-	git tag -a v$$PLZ_VERSION -m "v$$PLZ_VERSION"; \
-	git push origin v$$PLZ_VERSION
-
-.PHONY: release
