@@ -34,8 +34,13 @@ type reviewInfo struct {
 	reviewer      *github.Reviewers
 }
 
-var reviewTrailerRegex = regexp.MustCompile(
-	`^\s*((?i)plz-review-url)\s*:\s+https://plz.review/review/(\w+)\s*$`,
+var (
+	reviewTrailerRegex = regexp.MustCompile(
+		`^\s*((?i)plz-review-url)\s*:\s+https://plz.review/review/(\w+)\s*$`,
+	)
+	reviewerUsernameRegex = regexp.MustCompile(
+		`^[A-Za-z0-9-]+$`,
+	)
 )
 
 func Review(c *cli.Context) error {
@@ -55,6 +60,21 @@ func Review(c *cli.Context) error {
 
 	if err := checkCleanWorktree(ctx, gitHubRepo); err != nil {
 		return err
+	}
+
+	// Validate reviewer usernames.
+	reviewers := c.StringSlice("reviewer")
+	for _, reviewer := range reviewers {
+		if !reviewerUsernameRegex.MatchString(reviewer) {
+			return errors.Errorf("invalid reviewer username: %q", reviewer)
+		}
+		_, resp, err := gitHubRepo.Client().Users.Get(ctx, reviewer)
+		if err != nil {
+			if resp.StatusCode == http.StatusNotFound {
+				return errors.Errorf("reviewer %q not found", reviewer)
+			}
+			return errors.WithStack(err)
+		}
 	}
 
 	headRef, err := gitHubRepo.GitRepo().Head()
@@ -90,7 +110,7 @@ func Review(c *cli.Context) error {
 		if err != nil {
 			return err
 		}
-		isPRUpdated, err := createOrUpdatePR(ctx, gitHubRepo, ri, c.StringSlice("reviewer"))
+		isPRUpdated, err := createOrUpdatePR(ctx, gitHubRepo, ri, reviewers)
 		if err != nil {
 			return err
 		}
