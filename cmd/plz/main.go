@@ -59,29 +59,28 @@ func main() {
 				debugWriter = os.Stdout
 			}
 			plzAPIBaseURL := c.String("plz-api-base-url")
-			auth, err := auth.LoadFromKeyRing(plzAPIBaseURL)
-			if err != nil {
-				return errors.WithStack(err)
-			}
-			baseDeps := &deps.Deps{
+			c.Context = deps.ContextWithDeps(c.Context, &deps.Deps{
 				ErrorLog:      log.New(os.Stderr, "", 0),
 				InfoLog:       log.New(os.Stdout, "", 0),
 				DebugLog:      log.New(debugWriter, "[debug] ", log.Ldate|log.Lmicroseconds),
-				Auth:          auth,
 				PlzAPIBaseURL: plzAPIBaseURL,
-			}
-			c.Context = deps.ContextWithDeps(c.Context, baseDeps)
+				Auth:          auth.New(plzAPIBaseURL),
+			})
 			return nil
 		},
 		ExitErrHandler: func(c *cli.Context, err error) {
 			deps := deps.FromContext(c.Context)
 			if err != nil {
-				deps.ErrorLog.Println(err.Error())
-				var stackTracer interface {
-					StackTrace() errors.StackTrace
-				}
-				if errors.As(err, &stackTracer) {
-					deps.DebugLog.Printf("%+v", stackTracer.StackTrace())
+				if errors.Is(err, auth.ErrNoAuthCredentials) {
+					deps.ErrorLog.Println("no auth credentials, run plz auth")
+				} else {
+					deps.ErrorLog.Println(err.Error())
+					var stackTracer interface {
+						StackTrace() errors.StackTrace
+					}
+					if errors.As(err, &stackTracer) {
+						deps.DebugLog.Printf("%+v", stackTracer.StackTrace())
+					}
 				}
 				os.Exit(1)
 			}

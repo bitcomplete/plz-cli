@@ -51,10 +51,11 @@ func (r review) String() string {
 func Switch(c *cli.Context) error {
 	ctx := c.Context
 	deps := deps.FromContext(ctx)
-	if deps.Auth == nil {
-		return errors.New("error loading GitHub credentials, run plz auth")
+	token, err := deps.Auth.Token()
+	if err != nil {
+		return err
 	}
-	gitHubRepo, err := newGitHubRepo(ctx, deps.Auth.Token())
+	gitHubRepo, err := newGitHubRepo(ctx, token)
 	if err != nil {
 		return err
 	}
@@ -99,7 +100,7 @@ func Switch(c *cli.Context) error {
 	}
 
 	graphqlClient := graphql.NewClient(deps.PlzAPIBaseURL+"/api/v1", &http.Client{
-		Transport: &authTransport{Token: deps.Auth.Token()},
+		Transport: &authTransport{Token: token},
 	})
 	curReview, err := loadReview(ctx, graphqlClient, reviewID)
 	if err != nil {
