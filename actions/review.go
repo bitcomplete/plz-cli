@@ -241,8 +241,10 @@ func getReviewInfo(
 	for _, ri := range ris {
 		if ri.reviewID == "" {
 			ri.reviewID, reservedIDs = reservedIDs[0], reservedIDs[1:]
+			ri.headBranch = fmt.Sprintf("plz.review/review/%s", ri.reviewID)
+		} else {
+			ri.headBranch = ri.pr.Head.GetRef()
 		}
-		ri.headBranch = fmt.Sprintf("plz.review/review/%s", ri.reviewID)
 		ri.baseBranch = baseBranch
 		baseBranch = ri.headBranch
 	}
