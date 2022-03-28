@@ -41,6 +41,11 @@ func main() {
 				Usage:  "switch to a review branch",
 				Action: actions.Switch,
 			},
+			{
+				Name:   "sync",
+				Usage:  "update local review branches",
+				Action: actions.Sync,
+			},
 		},
 		Flags: []cli.Flag{
 			&cli.BoolFlag{
