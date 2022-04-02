@@ -1,11 +1,19 @@
 BUILD_DIR := $(PWD)/.build
 SHELL := /bin/bash
 UNAME := $(shell uname)
+ARCH := $(shell uname -m)
 
 GO_SOURCES := $(shell find `echo *` -name '*.go')
 
-ifeq ($(findstring Darwin,$(UNAME)),Darwin)
+GOLANG_VERSION := 1.18
+GOLANGCI_LINT_VERSION := 1.45.2
+
+ifeq ($(findstring MINGW64_NT,$(UNAME)),MINGW64_NT)
+    OS := windows
+else ifeq ($(findstring Darwin,$(UNAME)),Darwin)
     OS := darwin
+else ifeq ($(findstring Linux,$(UNAME)),Linux)
+    OS := linux
 else
     $(error unsupported OS $(UNAME))
 endif
@@ -31,14 +39,14 @@ ifeq ($(OS),darwin)
 $(BUILD_DIR)/go/bin/go:
 	@echo installing go...
 	@mkdir -p $(BUILD_DIR)/bin
-	@cd $(BUILD_DIR) && curl -Ls https://golang.org/dl/go1.17.6.darwin-amd64.tar.gz | tar xz
+	@cd $(BUILD_DIR) && curl -Ls https://golang.org/dl/go$(GOLANG_VERSION).$(OS)-$(ARCH).tar.gz | tar xz
 endif
 
 $(BUILD_DIR)/bin/golangci-lint: $(BUILD_DIR)/bin/activate
 	@echo 'install golangci-lint...'
 	@source $(BUILD_DIR)/bin/activate && \
 		cd $(BUILD_DIR) && \
-		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s v1.40.1
+		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s v$(GOLANGCI_LINT_VERSION)
 
 install-runtime: \
     $(BUILD_DIR)/bin/golangci-lint \
@@ -59,7 +67,6 @@ $(BUILD_DIR)/bin/plz: $(BUILD_DIR)/bin/activate $(GO_SOURCES)
 		go build -o $(BUILD_DIR)/bin/plz ./cmd/plz
 
 lint: $(BUILD_DIR)/bin/activate $(BUILD_DIR)/bin/golangci-lint
-	@source $(BUILD_DIR)/bin/activate && \
-		golangci-lint run $(GO_SOURCES)
+	@source $(BUILD_DIR)/bin/activate && golangci-lint run
 
 .PHONY: lint
