@@ -1,0 +1,11 @@
+run:
+  go: 1.18
+
+linters:
+  # The following are disabled until they support Go 1.18. See:
+  # https://github.com/golangci/golangci-lint/issues/2649
+  disable:
+    - gosimple
+    - staticcheck
+    - structcheck
+    - unused
