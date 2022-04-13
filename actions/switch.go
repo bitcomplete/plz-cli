@@ -59,9 +59,15 @@ func Switch(c *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := checkCleanWorktree(ctx, gitHubRepo); err != nil {
+
+	isClean, err := isCleanWorktree(ctx, gitHubRepo)
+	if err != nil {
 		return err
 	}
+	if !isClean {
+		return errors.Errorf("index is not clean")
+	}
+
 	repo := gitHubRepo.GitRepo()
 	headRef, err := repo.Head()
 	if err != nil {
