@@ -59,8 +59,12 @@ func Review(c *cli.Context) error {
 		Transport: &authTransport{Token: token},
 	})
 
-	if err := checkCleanWorktree(ctx, gitHubRepo); err != nil {
+	isClean, err := isCleanWorktree(ctx, gitHubRepo)
+	if err != nil {
 		return err
+	}
+	if !isClean {
+		return errors.Errorf("index is not clean")
 	}
 
 	// Validate reviewer usernames.
@@ -135,7 +139,7 @@ func Review(c *cli.Context) error {
 	return nil
 }
 
-func checkCleanWorktree(ctx context.Context, gitHubRepo *gitHubRepo) error {
+func isCleanWorktree(ctx context.Context, gitHubRepo *gitHubRepo) (bool, error) {
 	// Worktree.Status() is very slow so fall back to the command line instead.
 	// https://github.com/go-git/go-git/issues/181
 	cmd := exec.Command("git", "status", "--porcelain")
@@ -145,25 +149,21 @@ func checkCleanWorktree(ctx context.Context, gitHubRepo *gitHubRepo) error {
 	if err != nil {
 		var exitErr exec.ExitError
 		if errors.As(err, &exitErr) {
-			return errors.Errorf("git status failed: %s", exitErr.Stderr)
+			return false, errors.Errorf("git status failed: %s", exitErr.Stderr)
 		}
-		return errors.WithStack(err)
+		return false, errors.WithStack(err)
 	}
-	if stdout.Len() > 0 {
-		return errors.Errorf("index is not clean")
-	}
-	return nil
+	return stdout.Len() == 0, nil
 }
 
-func getReviewInfo(
+// getCommitRange determine the common ancestor between headHash and the default
+// branch, and returns the base and head commits.
+func getCommitRange(
 	ctx context.Context,
 	gitHubRepo *gitHubRepo,
-	graphqlClient *graphql.Client,
 	headHash plumbing.Hash,
-) ([]*reviewInfo, error) {
+) ([]*object.Commit, error) {
 	deps := deps.FromContext(ctx)
-
-	// Determine the common ancestor between the current branch and master
 	repo := gitHubRepo.GitRepo()
 	defaultBranchCommit, err := repo.CommitObject(
 		gitHubRepo.DefaultBranchRef().Hash(),
@@ -187,11 +187,36 @@ func getReviewInfo(
 		return nil, errors.New("no new commits")
 	}
 	deps.DebugLog.Println("found base commit at", baseCommit.Hash)
+	var result []*object.Commit
+	commit := headCommit
+	for commit.Hash != baseCommit.Hash {
+		result = append(result, commit)
+		if len(commit.ParentHashes) != 1 {
+			return nil, errors.Errorf("commit %v has multiple hashes", commit.Hash)
+		}
+		commit, err = repo.CommitObject(commit.ParentHashes[0])
+		if err != nil {
+			return nil, errors.WithStack(err)
+		}
+	}
+	return result, nil
+}
+
+func getReviewInfo(
+	ctx context.Context,
+	gitHubRepo *gitHubRepo,
+	graphqlClient *graphql.Client,
+	headHash plumbing.Hash,
+) ([]*reviewInfo, error) {
+	deps := deps.FromContext(ctx)
+	commitRange, err := getCommitRange(ctx, gitHubRepo, headHash)
+	if err != nil {
+		return nil, err
+	}
 
 	// Collect sequence of commits of interest
-	commit := headCommit
 	var ris []*reviewInfo
-	for commit.Hash != baseCommit.Hash {
+	for _, commit := range commitRange {
 		ri, err := makeReviewInfo(ctx, gitHubRepo, graphqlClient, commit)
 		if err != nil {
 			return nil, err
@@ -203,14 +228,6 @@ func getReviewInfo(
 			status = "reviewID: " + ri.reviewID + " pr: " + ri.pr.GetHTMLURL()
 		}
 		deps.DebugLog.Println("examined", commit.Hash, status)
-
-		if len(commit.ParentHashes) != 1 {
-			return nil, errors.Errorf("commit %v has multiple hashes", commit.Hash)
-		}
-		commit, err = repo.CommitObject(commit.ParentHashes[0])
-		if err != nil {
-			return nil, errors.WithStack(err)
-		}
 	}
 	// Reverse the array so the tip commit is at the end
 	for i, j := 0, len(ris)-1; i < j; i, j = i+1, j-1 {
@@ -449,7 +466,7 @@ func printReviewInfo(ctx context.Context, ris []*reviewInfo) {
 		if ri.updatedCommit != nil {
 			commit = ri.updatedCommit
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", commit.Hash.String()[:8], title, reviewURL, status)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", commit.Hash.String()[:8], title, status, reviewURL)
 	}
 	w.Flush()
 }

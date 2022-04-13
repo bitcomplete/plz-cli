@@ -71,8 +71,12 @@ func Sync(c *cli.Context) error {
 		Transport: &authTransport{Token: token},
 	})
 
-	if err := checkCleanWorktree(ctx, gitHubRepo); err != nil {
+	isClean, err := isCleanWorktree(ctx, gitHubRepo)
+	if err != nil {
 		return err
+	}
+	if !isClean {
+		return errors.Errorf("index is not clean")
 	}
 
 	headRef, err := gitHubRepo.GitRepo().Head()
