@@ -37,11 +37,6 @@ func main() {
 				},
 			},
 			{
-				Name:   "switch",
-				Usage:  "switch to a review branch",
-				Action: actions.Switch,
-			},
-			{
 				Name:   "sync",
 				Usage:  "update local review branches",
 				Action: actions.Sync,
