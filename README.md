@@ -1,6 +1,6 @@
 # plz
 
-plz is a companion CLI tool for managing reviews on [plz.review](plz.review).
+plz is a companion CLI tool for managing reviews on [plz.review](https://plz.review).
 
 ## Development quick start
 
