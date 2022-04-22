@@ -1,7 +1,6 @@
 package actions
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -13,6 +12,7 @@ import (
 	"unicode"
 
 	"github.com/bitcomplete/plz-cli/client/deps"
+	"github.com/bitcomplete/plz-cli/client/stack"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -24,7 +24,7 @@ import (
 )
 
 type reviewInfo struct {
-	commit        *object.Commit
+	stack.CommitInfo
 	reviewID      string
 	pr            *github.PullRequest
 	headBranch    string
@@ -35,9 +35,6 @@ type reviewInfo struct {
 }
 
 var (
-	reviewTrailerRegex = regexp.MustCompile(
-		`^\s*((?i)plz-review-url)\s*:\s+https://plz.review/review/(\w+)\s*$`,
-	)
 	reviewerUsernameRegex = regexp.MustCompile(
 		`^[A-Za-z0-9-]+$`,
 	)
@@ -97,12 +94,15 @@ func Review(c *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	if len(ris) == 0 {
+		return errors.New("no new commits")
+	}
 
-	parentHash := ris[0].commit.ParentHashes[0]
+	parentHash := ris[0].Commit.ParentHashes[0]
 	for _, ri := range ris {
-		deps.DebugLog.Println("processing", ri.commit.Hash)
-		commit := ri.commit
-		if ri.pr == nil || parentHash != ri.commit.ParentHashes[0] {
+		deps.DebugLog.Println("processing", ri.Commit.Hash)
+		commit := ri.Commit
+		if ri.pr == nil || parentHash != ri.Commit.ParentHashes[0] {
 			deps.DebugLog.Println("commit out of date, creating new commit")
 			commit, err = createCommit(gitHubRepo, ri, parentHash)
 			if err != nil {
@@ -156,52 +156,6 @@ func isCleanWorktree(ctx context.Context, gitHubRepo *gitHubRepo) (bool, error) 
 	return stdout.Len() == 0, nil
 }
 
-// getCommitRange determine the common ancestor between headHash and the default
-// branch, and returns the base and head commits.
-func getCommitRange(
-	ctx context.Context,
-	gitHubRepo *gitHubRepo,
-	headHash plumbing.Hash,
-) ([]*object.Commit, error) {
-	deps := deps.FromContext(ctx)
-	repo := gitHubRepo.GitRepo()
-	defaultBranchCommit, err := repo.CommitObject(
-		gitHubRepo.DefaultBranchRef().Hash(),
-	)
-	if err != nil {
-		return nil, errors.WithStack(err)
-	}
-	headCommit, err := repo.CommitObject(headHash)
-	if err != nil {
-		return nil, errors.WithStack(err)
-	}
-	baseCommits, err := headCommit.MergeBase(defaultBranchCommit)
-	if err != nil {
-		return nil, errors.WithStack(err)
-	}
-	if len(baseCommits) != 1 {
-		return nil, errors.New("cannot find a unique merge base")
-	}
-	baseCommit := baseCommits[0]
-	if headCommit.Hash == baseCommit.Hash {
-		return nil, errors.New("no new commits")
-	}
-	deps.DebugLog.Println("found base commit at", baseCommit.Hash)
-	var result []*object.Commit
-	commit := headCommit
-	for commit.Hash != baseCommit.Hash {
-		result = append(result, commit)
-		if len(commit.ParentHashes) != 1 {
-			return nil, errors.Errorf("commit %v has multiple hashes", commit.Hash)
-		}
-		commit, err = repo.CommitObject(commit.ParentHashes[0])
-		if err != nil {
-			return nil, errors.WithStack(err)
-		}
-	}
-	return result, nil
-}
-
 func getReviewInfo(
 	ctx context.Context,
 	gitHubRepo *gitHubRepo,
@@ -209,25 +163,43 @@ func getReviewInfo(
 	headHash plumbing.Hash,
 ) ([]*reviewInfo, error) {
 	deps := deps.FromContext(ctx)
-	commitRange, err := getCommitRange(ctx, gitHubRepo, headHash)
+
+	repo := gitHubRepo.GitRepo()
+	headCommit, err := repo.CommitObject(headHash)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	s, err := stack.Load(ctx, repo, graphqlClient, headCommit, gitHubRepo.DefaultBranch())
 	if err != nil {
 		return nil, err
 	}
 
 	// Collect sequence of commits of interest
 	var ris []*reviewInfo
-	for _, commit := range commitRange {
-		ri, err := makeReviewInfo(ctx, gitHubRepo, graphqlClient, commit)
+	for _, ci := range s {
+		status := ci.Status()
+		if status == stack.CommitStatusCurrent && ci.Review.Status == stack.ReviewStatusMerged {
+			break
+		}
+		if status == stack.CommitStatusBehind {
+			return nil, errors.Errorf(
+				"commit %s for review %s is behind, run plz sync",
+				ci.Commit.Hash.String(),
+				ci.Review.ID,
+			)
+		}
+
+		ri, err := makeReviewInfo(ctx, gitHubRepo, ci)
 		if err != nil {
 			return nil, err
 		}
 		ris = append(ris, ri)
 
-		status := "review not found"
+		statusMessage := "review not found"
 		if ri.pr != nil {
-			status = "reviewID: " + ri.reviewID + " pr: " + ri.pr.GetHTMLURL()
+			statusMessage = "reviewID: " + ri.Review.ID + " pr: " + ri.pr.GetHTMLURL()
 		}
-		deps.DebugLog.Println("examined", commit.Hash, status)
+		deps.DebugLog.Println("examined", ci.Commit.Hash, statusMessage)
 	}
 	// Reverse the array so the tip commit is at the end
 	for i, j := 0, len(ris)-1; i < j; i, j = i+1, j-1 {
@@ -274,16 +246,16 @@ func createCommit(
 	parentHash plumbing.Hash,
 ) (*object.Commit, error) {
 	repo := gitHubRepo.GitRepo()
-	message := ri.commit.Message
+	message := ri.Commit.Message
 	if ri.pr == nil {
-		message = strings.TrimRightFunc(ri.commit.Message, unicode.IsSpace) +
+		message = strings.TrimRightFunc(ri.Commit.Message, unicode.IsSpace) +
 			"\n\nplz-review-url: https://plz.review/review/" + ri.reviewID
 	}
 	newCommit := &object.Commit{
-		Author:       ri.commit.Author,
-		Committer:    ri.commit.Committer,
+		Author:       ri.Commit.Author,
+		Committer:    ri.Commit.Committer,
 		Message:      message,
-		TreeHash:     ri.commit.TreeHash,
+		TreeHash:     ri.Commit.TreeHash,
 		ParentHashes: []plumbing.Hash{parentHash},
 	}
 	obj := repo.Storer.NewEncodedObject()
@@ -358,7 +330,7 @@ func createOrUpdatePR(
 ) (bool, error) {
 	var prCreatedOrUpdated bool
 	deps := deps.FromContext(ctx)
-	message := ri.commit.Message
+	message := ri.Commit.Message
 	if ri.updatedCommit != nil {
 		message = ri.updatedCommit.Message
 	}
@@ -450,7 +422,7 @@ func printReviewInfo(ctx context.Context, ris []*reviewInfo) {
 	w := tabwriter.NewWriter(deps.InfoLog.Writer(), 0, 0, 1, ' ', 0)
 	for i := len(ris) - 1; i >= 0; i-- {
 		ri := ris[i]
-		parts := strings.SplitN(ri.commit.Message, "\n", 2)
+		parts := strings.SplitN(ri.Commit.Message, "\n", 2)
 		title := strings.TrimSpace(parts[0])
 		if len(title) > 47 {
 			title = title[:47] + "..."
@@ -462,7 +434,7 @@ func printReviewInfo(ctx context.Context, ris []*reviewInfo) {
 		} else if ri.isUpdated {
 			status = "updated"
 		}
-		commit := ri.commit
+		commit := ri.Commit
 		if ri.updatedCommit != nil {
 			commit = ri.updatedCommit
 		}
@@ -471,46 +443,21 @@ func printReviewInfo(ctx context.Context, ris []*reviewInfo) {
 	w.Flush()
 }
 
-func readReviewIDFromCommitMessage(message string) string {
-	s := bufio.NewScanner(strings.NewReader(message))
-	for s.Scan() {
-		matches := reviewTrailerRegex.FindStringSubmatch(s.Text())
-		if len(matches) == 3 {
-			return matches[2]
-		}
-	}
-	return ""
-}
-
 func makeReviewInfo(
 	ctx context.Context,
 	gitHubRepo *gitHubRepo,
-	graphqlClient *graphql.Client,
-	commit *object.Commit,
+	ci stack.CommitInfo,
 ) (*reviewInfo, error) {
-	ri := &reviewInfo{
-		commit:   commit,
-		reviewID: readReviewIDFromCommitMessage(commit.Message),
-	}
-	if ri.reviewID == "" {
+	ri := &reviewInfo{CommitInfo: ci}
+	if ri.Review == nil {
 		return ri, nil
 	}
-	var query struct {
-		Review struct {
-			GitHubPR int `graphql:"gitHubPR"`
-		} `graphql:"review(id: $id)"`
-	}
-	err := graphqlClient.Query(ctx, &query, map[string]interface{}{
-		"id": graphql.ID(ri.reviewID),
-	})
-	if err != nil {
-		return nil, errors.WithStack(err)
-	}
+	ri.reviewID = ci.Review.ID
 	pr, _, err := gitHubRepo.Client().PullRequests.Get(
 		ctx,
 		gitHubRepo.Owner(),
 		gitHubRepo.Name(),
-		query.Review.GitHubPR,
+		ci.GitHubPR,
 	)
 	if err != nil {
 		return nil, errors.WithStack(err)

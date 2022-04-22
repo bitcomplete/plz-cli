@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/bitcomplete/plz-cli/client/deps"
+	"github.com/bitcomplete/plz-cli/client/stack"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -14,45 +15,16 @@ import (
 	"github.com/urfave/cli/v2"
 )
 
-type syncReview struct {
-	ID           string `graphql:"id"`
-	Status       string `graphql:"status"`
-	HeadBranch   string `graphql:"headBranch"`
-	RevisionList struct {
-		Revisions []struct {
-			Parent *struct {
-				Number int `graphql:"number"`
-				Review struct {
-					ID string `graphql:"id"`
-				} `graphql:"review"`
-			} `graphql:"parent"`
-		} `graphql:"revisions"`
-	} `graphql:"revisionList(options: {count: 1})"`
-}
-
 type syncUpdatedReview struct {
-	HeadBranch   string `graphql:"headBranch"`
-	RevisionList struct {
+	HeadBranch         string `graphql:"headBranch"`
+	LatestRevisionList struct {
 		Revisions []struct {
 			Number        int    `graphql:"number"`
 			HeadCommitSHA string `graphql:"headCommitSha"`
 			BaseBranch    string `graphql:"baseBranch"`
 			BaseCommitSHA string `graphql:"baseCommitSha"`
 		} `graphql:"revisions"`
-	} `graphql:"revisionList(options: {count: 1})"`
-}
-
-func loadSyncReview(ctx context.Context, graphqlClient *graphql.Client, reviewID string) (*syncReview, error) {
-	var query struct {
-		Review syncReview `graphql:"review(id: $reviewID)"`
-	}
-	err := graphqlClient.Query(ctx, &query, map[string]interface{}{
-		"reviewID": graphql.ID(reviewID),
-	})
-	if err != nil {
-		return nil, errors.WithStack(err)
-	}
-	return &query.Review, nil
+	} `graphql:"latestRevisionList: revisionList(options: {count: 1})"`
 }
 
 func Sync(c *cli.Context) error {
@@ -83,41 +55,56 @@ func Sync(c *cli.Context) error {
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	deps.DebugLog.Println("HEAD is at", headRef.Hash())
+	headRefName := headRef.Name()
+	deps.DebugLog.Printf("HEAD is %v at %v", headRefName, headRef.Hash())
+	if !headRefName.IsBranch() {
+		return errors.Errorf("HEAD is not a branch")
+	}
+
 	repo := gitHubRepo.GitRepo()
 	headCommit, err := repo.CommitObject(headRef.Hash())
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	reviewID := readReviewIDFromCommitMessage(headCommit.Message)
-	if reviewID == "" {
-		return errors.New("HEAD commit has no review")
+	s, err := stack.Load(ctx, repo, graphqlClient, headCommit, gitHubRepo.DefaultBranch())
+	if err != nil {
+		return err
 	}
-	var reviews []*syncReview
-	for reviewID != "" {
-		deps.DebugLog.Println("loading review", reviewID)
-		review, err := loadSyncReview(ctx, graphqlClient, reviewID)
-		if err != nil {
-			return err
-		}
-		if review.Status != "open" {
-			break
-		}
-		reviews = append(reviews, review)
-		parent := review.RevisionList.Revisions[0].Parent
-		if parent == nil {
-			break
-		}
-		reviewID = parent.Review.ID
+	if len(s) == 0 {
+		return nil
 	}
 
-	remote, err := repo.Remote(git.DefaultRemoteName)
-	if err != nil {
-		return errors.WithStack(err)
-	}
-	updatedReviews := make([]*syncUpdatedReview, len(reviews))
-	for i := len(reviews) - 1; i >= 0; i-- {
-		review := reviews[i]
+	newBase := ""
+	var newHeadRef *plumbing.Reference
+	i := len(s) - 1
+	for ; i >= 0; i-- {
+		ci := s[i]
+		status := ci.Status()
+		if status == stack.CommitStatusNew || status == stack.CommitStatusModified {
+			break
+		}
+		review := ci.Review
+		if review.Status == stack.ReviewStatusDeleted {
+			continue
+		}
+		if review.Status == stack.ReviewStatusMerged {
+			if status == stack.CommitStatusCurrent {
+				continue
+			}
+			// The stack is based on an old revision for this merged review.
+			// Pull the merged review's base branch to ensure we have the merge
+			// commit available locally.
+			latestRevision := review.LatestRevision
+			err = pullBranch(ctx, repo, latestRevision.BaseBranch)
+			if err != nil {
+				return err
+			}
+			// Specify new base commit for the stack starting at merge commit.
+			newBase = latestRevision.HeadCommitSHA
+			// Don't include merge commit in those to rebase on top of newBase.
+			i--
+			break
+		}
 		var mutation struct {
 			Review syncUpdatedReview `graphql:"syncReviewWithParent(reviewID: $reviewID)"`
 		}
@@ -128,48 +115,81 @@ func Sync(c *cli.Context) error {
 		if err != nil {
 			return errors.WithStack(err)
 		}
-		updatedReviews[i] = &mutation.Review
+		updatedReview := mutation.Review
+		updatedLatestRevision := updatedReview.LatestRevisionList.Revisions[0]
+		if updatedLatestRevision.HeadCommitSHA == ci.Commit.Hash.String() {
+			continue
+		}
+		deps.DebugLog.Printf("pulling branch for review %v: %v", review.ID, review.HeadBranch)
+		err = pullBranch(ctx, repo, review.HeadBranch)
+		if err != nil {
+			return err
+		}
 
-		refName := plumbing.NewRemoteReferenceName(git.DefaultRemoteName, review.HeadBranch)
-		ref, err := repo.Reference(refName, true)
+		newHeadRef, err = repo.Reference(plumbing.NewBranchReferenceName(review.HeadBranch), true)
 		if err != nil {
 			return errors.WithStack(err)
 		}
-		refHash := ref.Hash().String()
-		newHeadCommitSHA := mutation.Review.RevisionList.Revisions[0].HeadCommitSHA
-		if newHeadCommitSHA != refHash {
-			deps.DebugLog.Printf("fetching out of date branch %v for review %v", review.HeadBranch, review.ID)
-			err = remote.FetchContext(ctx, &git.FetchOptions{
-				RefSpecs: []config.RefSpec{
-					config.RefSpec(fmt.Sprintf("+refs/heads/%[1]s:refs/remotes/%[2]s/%[1]s", review.HeadBranch, git.DefaultRemoteName)),
-				},
-			})
-			if err != nil {
-				return errors.WithStack(err)
-			}
-			// Re-read the reference after fetching so it's up to date.
-			ref, err = repo.Reference(refName, true)
-			if err != nil {
-				return errors.WithStack(err)
-			}
-			if newHeadCommitSHA != ref.Hash().String() {
-				return errors.Errorf("fetched head commit does not match expected for review %v", review.ID)
-			}
-
-			if i == 0 {
-				// Re-point the tip review's branch to what was fetched.
-				headRefName := headRef.Name()
-				if headRefName.IsBranch() {
-					deps.DebugLog.Println("repointing", headRefName, "to", ref.Hash())
-					err := gitHubRepo.GitRepo().Storer.SetReference(
-						plumbing.NewHashReference(headRefName, ref.Hash()),
-					)
-					if err != nil {
-						return err
-					}
-				}
-			}
+		if newHeadRef.Hash().String() != updatedLatestRevision.HeadCommitSHA {
+			return errors.Errorf(
+				"branch %v had wrong hash, got %v, want %v",
+				review.HeadBranch,
+				newHeadRef.Hash(), updatedLatestRevision.HeadCommitSHA,
+			)
 		}
+		newBase = review.HeadBranch
+	}
+
+	if newHeadRef != nil {
+		deps.DebugLog.Println("repointing", headRefName, "to", newHeadRef.Hash())
+		err = gitHubRepo.GitRepo().Storer.SetReference(
+			plumbing.NewHashReference(headRefName, newHeadRef.Hash()),
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Re-point the tip review's branch to what was fetched.
+	if i >= 0 && newBase != "" {
+		return errors.Errorf(
+			"some commits are ahead, run git rebase --onto %s %s~%d",
+			newBase,
+			headRefName.Short(),
+			i+1,
+		)
+	}
+	return nil
+}
+
+func pullBranch(ctx context.Context, repo *git.Repository, name string) error {
+	deps := deps.FromContext(ctx)
+	remote, err := repo.Remote(git.DefaultRemoteName)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	deps.DebugLog.Printf("fetching branch %v", name)
+	refSpec := fmt.Sprintf(
+		"+refs/heads/%[1]s:refs/remotes/%[2]s/%[1]s",
+		name,
+		git.DefaultRemoteName,
+	)
+	err = remote.FetchContext(ctx, &git.FetchOptions{
+		RefSpecs: []config.RefSpec{config.RefSpec(refSpec)},
+	})
+	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
+		return errors.WithStack(err)
+	}
+	remoteRefName := plumbing.NewRemoteReferenceName(git.DefaultRemoteName, name)
+	updatedRef, err := repo.Reference(remoteRefName, true)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	deps.DebugLog.Println("repointing", name, "to", updatedRef.Hash())
+	localRefName := plumbing.NewBranchReferenceName(name)
+	err = repo.Storer.SetReference(plumbing.NewHashReference(localRefName, updatedRef.Hash()))
+	if err != nil {
+		return errors.WithStack(err)
 	}
 
 	return nil

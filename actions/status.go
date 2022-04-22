@@ -8,20 +8,11 @@ import (
 	"text/tabwriter"
 
 	"github.com/bitcomplete/plz-cli/client/deps"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/bitcomplete/plz-cli/client/stack"
 	"github.com/pkg/errors"
 	"github.com/shurcooL/graphql"
 	"github.com/urfave/cli/v2"
 )
-
-type statusReview struct {
-	ID           string `graphql:"id"`
-	RevisionList struct {
-		Revisions []struct {
-			HeadCommitSHA string `graphql:"headCommitSha"`
-		} `graphql:"revisions"`
-	} `graphql:"revisionList"`
-}
 
 func Status(c *cli.Context) error {
 	ctx := c.Context
@@ -45,12 +36,15 @@ func Status(c *cli.Context) error {
 	}
 	deps.DebugLog.Println("HEAD is at", headRef.Hash())
 
-	commitRange, err := getCommitRange(ctx, gitHubRepo, headRef.Hash())
+	repo := gitHubRepo.GitRepo()
+	headCommit, err := repo.CommitObject(headRef.Hash())
+	if err != nil {
+		return errors.WithStack(err)
+	}
+
+	s, err := stack.Load(ctx, repo, graphqlClient, headCommit, gitHubRepo.DefaultBranch())
 	if err != nil {
 		return err
-	}
-	if len(commitRange) == 0 {
-		return nil
 	}
 
 	isClean, err := isCleanWorktree(ctx, gitHubRepo)
@@ -58,58 +52,63 @@ func Status(c *cli.Context) error {
 		return err
 	}
 	if !isClean {
-		deps.InfoLog.Println("unstaged changes")
+		deps.InfoLog.Println("index is not clean")
 	}
 
 	w := tabwriter.NewWriter(deps.InfoLog.Writer(), 0, 0, 1, ' ', 0)
-	for _, commit := range commitRange {
-		var review *statusReview
-		if reviewID := readReviewIDFromCommitMessage(commit.Message); reviewID != "" {
-			deps.DebugLog.Println("loading review", reviewID)
-			var query struct {
-				Review statusReview `graphql:"review(id: $reviewID)"`
-			}
-			err := graphqlClient.Query(ctx, &query, map[string]interface{}{
-				"reviewID": graphql.ID(reviewID),
-			})
-			if err != nil {
-				return errors.WithStack(err)
-			}
-			review = &query.Review
-		}
-		printReviewStatus(w, commit, review)
+	for _, ci := range s {
+		printReviewStatus(w, ci)
 	}
 	w.Flush()
+
 	return nil
 }
 
-func printReviewStatus(w io.Writer, commit *object.Commit, review *statusReview) {
-	status := "new"
-	if review != nil {
-		revisionIndex := -1
-		for i, revision := range review.RevisionList.Revisions {
-			if revision.HeadCommitSHA == commit.Hash.String() {
-				revisionIndex = i
-				break
-			}
+func printReviewStatus(w io.Writer, ci stack.CommitInfo) {
+	const (
+		asciiColorReset  = "\033[m"
+		asciiColorYellow = "\033[33m"
+		asciiColorGreen  = "\033[32m"
+		asciiColorRed    = "\033[31m"
+		asciiColorCyan   = "\033[36m"
+	)
+	statusText := ""
+	color := ""
+	urlSuffix := ""
+	switch status := ci.Status(); status {
+	case stack.CommitStatusCurrent:
+		if ci.Review.Status == stack.ReviewStatusMerged {
+			statusText = "merged"
+			color = asciiColorCyan
+		} else {
+			statusText = fmt.Sprintf("rev %d, current", ci.Review.LocalRevision.Number)
+			color = asciiColorGreen
 		}
-		switch revisionIndex {
-		case -1:
-			status = "modified"
-		case 0:
-			status = "current"
-		default:
-			status = "outdated"
-		}
+	case stack.CommitStatusBehind:
+		statusText = fmt.Sprintf("rev %d, behind", ci.Review.LocalRevision.Number)
+		color = asciiColorYellow
+		urlSuffix = fmt.Sprintf("/revision/%d", ci.Review.LocalRevision.Number)
+	default:
+		statusText = string(status)
+		color = asciiColorRed
 	}
-	parts := strings.SplitN(commit.Message, "\n", 2)
+	parts := strings.SplitN(ci.Commit.Message, "\n", 2)
 	title := strings.TrimSpace(parts[0])
 	if len(title) > 47 {
 		title = title[:47] + "..."
 	}
 	reviewURL := ""
-	if review != nil {
-		reviewURL = "https://plz.review/review/" + review.ID
+	if ci.Review != nil {
+		reviewURL = fmt.Sprintf("https://plz.review/review/%s%s", ci.Review.ID, urlSuffix)
 	}
-	fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", commit.Hash.String()[:8], title, status, reviewURL)
+	fmt.Fprintf(
+		w,
+		"%s%s\t%s\t(%s)\t%s%s\n",
+		color,
+		ci.Commit.Hash.String()[:8],
+		title,
+		statusText,
+		reviewURL,
+		asciiColorReset,
+	)
 }
