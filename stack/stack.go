@@ -249,9 +249,17 @@ func Load(
 				// so this needs more careful thought.
 				continue
 			}
-			commit, err := repo.CommitObject(plumbing.NewHash(linkedRevision.Revision.HeadCommitSHA))
+			headCommitHash := plumbing.NewHash(linkedRevision.Revision.HeadCommitSHA)
+			commit, err := repo.CommitObject(headCommitHash)
 			if err != nil {
-				return nil, errors.WithStack(err)
+				if errors.Is(err, plumbing.ErrObjectNotFound) {
+					// If we haven't yet fetched the commit from the remote then
+					// we fabricate a commit and hope downstream code doesn't
+					// try to access anything other than the hash.
+					commit = &object.Commit{Hash: headCommitHash}
+				} else {
+					return nil, errors.WithStack(err)
+				}
 			}
 			review := &linkedRevision.Review
 			s = append(s, CommitInfo{
