@@ -149,7 +149,7 @@ func Load(
 						Revision
 						Parent *Revision `graphql:"parent"`
 					} `graphql:"revisions"`
-				} `graphql:"localRevisionList: revisionList(options: {count: 1}, filterOptions: {headCommitSha: $headCommitSha})"`
+				} `graphql:"localRevisionList: revisionList(options: {count: 2}, filterOptions: {headCommitSha: $headCommitSha})"`
 			} `graphql:"review(id: $reviewId)"`
 		}
 		deps.DebugLog.Printf("loading review %v", reviewID)
@@ -164,9 +164,16 @@ func Load(
 		latestRevision := review.LatestRevisionList.Revisions[0]
 		latestRevisionParent = latestRevision.Parent
 		var localRevision *Revision
-		if localRevisions := review.LocalRevisionList.Revisions; len(localRevisions) > 0 {
-			localRevision = &localRevisions[0].Revision
-			localRevisionParent = localRevisions[0].Parent
+		// The LocalRevisionList has all of the revisions whose head commit SHA
+		// matches the current commit's SHA. The best match among those is the
+		// latest revision having a base commit SHA the same as the current
+		// commit's parent's SHA.
+		for _, r := range review.LocalRevisionList.Revisions {
+			if r.BaseCommitSHA == nextCommit.Hash.String() {
+				localRevision = &r.Revision
+				localRevisionParent = r.Parent
+				break
+			}
 		}
 		ci.Review = &Review{
 			baseReview:     review.baseReview,
