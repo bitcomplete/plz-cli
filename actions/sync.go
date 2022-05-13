@@ -80,6 +80,7 @@ func Sync(c *cli.Context) error {
 	for ; i >= 0; i-- {
 		ci := s[i]
 		status := ci.Status()
+		deps.DebugLog.Println("examining", ci.Commit.Hash.String(), "with status", status)
 		if status == stack.CommitStatusNew || status == stack.CommitStatusModified {
 			break
 		}
@@ -91,6 +92,9 @@ func Sync(c *cli.Context) error {
 			if status == stack.CommitStatusCurrent {
 				continue
 			}
+			if status != stack.CommitStatusBehind {
+				return errors.Errorf("merged review %v has local modifications", review.ID)
+			}
 			// The stack is based on an old revision for this merged review.
 			// Pull the merged review's base branch to ensure we have the merge
 			// commit available locally.
@@ -100,10 +104,10 @@ func Sync(c *cli.Context) error {
 				return err
 			}
 			// Specify new base commit for the stack starting at merge commit.
+			// There may be other merged reviews on top, so continue processing
+			// the stack.
 			newBase = latestRevision.HeadCommitSHA
-			// Don't include merge commit in those to rebase on top of newBase.
-			i--
-			break
+			continue
 		}
 		var mutation struct {
 			Review syncUpdatedReview `graphql:"syncReviewWithParent(reviewID: $reviewID)"`
@@ -140,16 +144,6 @@ func Sync(c *cli.Context) error {
 		newBase = review.HeadBranch
 	}
 
-	if newHeadRef != nil {
-		deps.DebugLog.Println("repointing", headRefName, "to", newHeadRef.Hash())
-		err = gitHubRepo.GitRepo().Storer.SetReference(
-			plumbing.NewHashReference(headRefName, newHeadRef.Hash()),
-		)
-		if err != nil {
-			return err
-		}
-	}
-
 	// Re-point the tip review's branch to what was fetched.
 	if i >= 0 && newBase != "" {
 		return errors.Errorf(
@@ -158,6 +152,14 @@ func Sync(c *cli.Context) error {
 			headRefName.Short(),
 			i+1,
 		)
+	} else if newHeadRef != nil {
+		deps.DebugLog.Println("repointing", headRefName, "to", newHeadRef.Hash())
+		err = gitHubRepo.GitRepo().Storer.SetReference(
+			plumbing.NewHashReference(headRefName, newHeadRef.Hash()),
+		)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
