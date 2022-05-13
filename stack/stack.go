@@ -193,7 +193,8 @@ func Load(
 	// Determine the starting point for loading linked revisions, defaulting to
 	// the parent of the local revision found above.
 	startRevision := localRevisionParent
-	if startRevision == nil && latestRevisionParent != nil {
+	reachedBase := startRevision == nil && latestRevisionParent != nil
+	if reachedBase {
 		// No local revision was found before we reached the default branch.
 		// Subsequent reviews will come from linked revisions starting from the
 		// last review's parent. Use as a starting point the latest revision of
@@ -244,6 +245,11 @@ func Load(
 		linkedRevisions := query.LinkedRevisions
 		for i := len(linkedRevisions) - 1; i >= 0; i-- {
 			linkedRevision := linkedRevisions[i]
+			if reachedBase && linkedRevision.Review.Status == ReviewStatusOpen {
+				// We reached the base commit without encountering this review
+				// meaning it's no longer part of the stack, so drop it.
+				continue
+			}
 			if _, ok := visitedReviews[linkedRevision.Review.ID]; ok {
 				// This review has been visited before which most likely means
 				// that the stack has been reordered.
