@@ -51,7 +51,8 @@ func Sync(c *cli.Context) error {
 		return errors.Errorf("index is not clean")
 	}
 
-	headRef, err := gitHubRepo.GitRepo().Head()
+	repo := gitHubRepo.GitRepo()
+	headRef, err := repo.Head()
 	if err != nil {
 		return errors.WithStack(err)
 	}
@@ -61,7 +62,6 @@ func Sync(c *cli.Context) error {
 		return errors.Errorf("HEAD is not a branch")
 	}
 
-	repo := gitHubRepo.GitRepo()
 	headCommit, err := repo.CommitObject(headRef.Hash())
 	if err != nil {
 		return errors.WithStack(err)
@@ -99,7 +99,7 @@ func Sync(c *cli.Context) error {
 			// Pull the merged review's base branch to ensure we have the merge
 			// commit available locally.
 			latestRevision := review.LatestRevision
-			err = pullBranch(ctx, repo, latestRevision.BaseBranch)
+			err = pullBranch(ctx, gitHubRepo, latestRevision.BaseBranch)
 			if err != nil {
 				return err
 			}
@@ -125,7 +125,7 @@ func Sync(c *cli.Context) error {
 			continue
 		}
 		deps.DebugLog.Printf("pulling branch for review %v: %v", review.ID, review.HeadBranch)
-		err = pullBranch(ctx, repo, review.HeadBranch)
+		err = pullBranch(ctx, gitHubRepo, review.HeadBranch)
 		if err != nil {
 			return err
 		}
@@ -164,9 +164,10 @@ func Sync(c *cli.Context) error {
 	return nil
 }
 
-func pullBranch(ctx context.Context, repo *git.Repository, name string) error {
+func pullBranch(ctx context.Context, repo *gitHubRepo, name string) error {
 	deps := deps.FromContext(ctx)
-	remote, err := repo.Remote(git.DefaultRemoteName)
+	gitRepo := repo.GitRepo()
+	remote, err := gitRepo.Remote(git.DefaultRemoteName)
 	if err != nil {
 		return errors.WithStack(err)
 	}
@@ -178,18 +179,19 @@ func pullBranch(ctx context.Context, repo *git.Repository, name string) error {
 	)
 	err = remote.FetchContext(ctx, &git.FetchOptions{
 		RefSpecs: []config.RefSpec{config.RefSpec(refSpec)},
+		Auth:     repo.GitAuth(),
 	})
 	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 		return errors.WithStack(err)
 	}
 	remoteRefName := plumbing.NewRemoteReferenceName(git.DefaultRemoteName, name)
-	updatedRef, err := repo.Reference(remoteRefName, true)
+	updatedRef, err := gitRepo.Reference(remoteRefName, true)
 	if err != nil {
 		return errors.WithStack(err)
 	}
 	deps.DebugLog.Println("repointing", name, "to", updatedRef.Hash())
 	localRefName := plumbing.NewBranchReferenceName(name)
-	err = repo.Storer.SetReference(plumbing.NewHashReference(localRefName, updatedRef.Hash()))
+	err = gitRepo.Storer.SetReference(plumbing.NewHashReference(localRefName, updatedRef.Hash()))
 	if err != nil {
 		return errors.WithStack(err)
 	}
