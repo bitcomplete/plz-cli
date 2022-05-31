@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"text/tabwriter"
+	"time"
 	"unicode"
 
 	"github.com/bitcomplete/plz-cli/client/deps"
@@ -94,12 +95,13 @@ func Review(c *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	if len(ris) == 0 {
+	numRIs := len(ris)
+	if numRIs == 0 {
 		return errors.New("no new commits")
 	}
 
 	parentHash := ris[0].Commit.ParentHashes[0]
-	for _, ri := range ris {
+	for i, ri := range ris {
 		deps.DebugLog.Println("processing", ri.Commit.Hash)
 		commit := ri.Commit
 		if ri.pr == nil || parentHash != ri.Commit.ParentHashes[0] {
@@ -120,6 +122,18 @@ func Review(c *cli.Context) error {
 			return err
 		}
 		ri.isUpdated = isBranchUpdated || isPRUpdated
+		if i < numRIs-1 && ri.isUpdated {
+			// TODO(PLZ-1095): If plz.review processes the webhook for a child
+			// review's new revision before the webhook for its parent then the
+			// child will be orphaned, and the stack relationship will be
+			// broken. This is a hack to reduce the likelihood that a new
+			// revision in a child review is processed before a new revision in
+			// the parent review. The proper fix is to wait until any revisions
+			// that may be created by pushing the branch or updating the PR are
+			// created (e.g. by polling the API) before continuing on up the
+			// stack.
+			time.Sleep(time.Millisecond * 500)
+		}
 		parentHash = commit.Hash
 	}
 
