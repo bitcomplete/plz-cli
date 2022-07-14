@@ -52,9 +52,9 @@ func Prompt(plzAPIBaseURL string) (*Auth, error) {
 	fmt.Printf("\033[33m!\033[m First copy your one-time code: \033[1m%s\033[m\n", code.UserCode)
 	fmt.Println("Press Enter to open github.com in your browser...")
 	fmt.Scanln()
-	err = browser.OpenURL(code.VerificationURI)
-	if err != nil {
-		return nil, errors.WithStack(err)
+	if err = browser.OpenURL(code.VerificationURI); err != nil {
+		fmt.Println("Could not open a browser:", err)
+		fmt.Println("Please visit this URL in your browser manually:", code.VerificationURI)
 	}
 	accessToken, err := device.PollToken(
 		httpClient,
