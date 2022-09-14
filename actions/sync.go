@@ -160,6 +160,17 @@ func Sync(c *cli.Context) error {
 		if err != nil {
 			return err
 		}
+		worktree, err := repo.Worktree()
+		if err != nil {
+			return err
+		}
+		err = worktree.Reset(&git.ResetOptions{
+			Commit: newHeadRef.Hash(),
+			Mode:   git.HardReset,
+		})
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
