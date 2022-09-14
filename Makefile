@@ -2,11 +2,6 @@ BUILD_DIR := $(PWD)/.build
 SHELL := /bin/bash
 UNAME := $(shell uname)
 ARCH := $(shell uname -m)
-GOARCH := $(ARCH)
-
-ifeq ($(findstring x86_64,$(ARCH)),x86_64)
-    GOARCH := amd64
-endif
 
 GO_SOURCES := $(shell find `echo *` -name '*.go')
 
@@ -44,7 +39,7 @@ ifeq ($(OS),darwin)
 $(BUILD_DIR)/go/bin/go:
 	@echo installing go...
 	@mkdir -p $(BUILD_DIR)/bin
-	@cd $(BUILD_DIR) && curl -Ls https://golang.org/dl/go$(GOLANG_VERSION).$(OS)-$(GOARCH).tar.gz | tar xz
+	@cd $(BUILD_DIR) && curl -Ls https://golang.org/dl/go$(GOLANG_VERSION).$(OS)-$(ARCH).tar.gz | tar xz
 endif
 
 $(BUILD_DIR)/bin/golangci-lint: $(BUILD_DIR)/bin/activate
