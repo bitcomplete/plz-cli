@@ -38,7 +38,7 @@ func Prompt(plzAPIBaseURL string) (*Auth, error) {
 	httpClient := http.DefaultClient
 	gitHubAppClientID, err := fetchGitHubAppClientID(httpClient, plzAPIBaseURL)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 	code, err := device.RequestCode(
 		httpClient,
